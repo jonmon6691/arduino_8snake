@@ -7,5 +7,5 @@ A snake game on the Adafruit 8x8 bicolor display
  - you eat red berries to shrink
  - you eat green berries to grow
  - you speed up
- - the world is a taurus
+ - the world is a torus
  
