@@ -17,7 +17,7 @@ Adafruit_BicolorMatrix matrix = Adafruit_BicolorMatrix();
 // super simple rising edge and debounce detector
 // Warning: only works if all 4 button pin numbers are sequential
 uint8_t db[4] = {0};
-void on_button(int pin, int debounce, void (*callback)(uint8_t), const uint8_t context)
+void on_button(int pin, int debounce, void (*callback)(int8_t), const int8_t context)
 {
   if (!digitalRead(pin)) {
     if (!db[pin%4]) {
@@ -35,25 +35,47 @@ int8_t head = index(2,2);
 // The value given by snake[index]-1 is the index of the next snake pixel
 // Sentinal value 0 means no snake part at that pixel
 int8_t snake[8*8];
-uint8_t current_direction = 0;
+int8_t current_direction = 0;
+unsigned long game_speed_ms = 500;
 
-#define SOUTH (1 << 0)
-#define EAST  (1 << 1)
-#define NORTH (1 << 2)
-#define WEST  (1 << 3)
+struct {
+  uint8_t x;
+  uint8_t y;
+  uint8_t color;
+} food;
+
+uint8_t snake_color;
+
+#define NORTH (1)
+#define EAST  (2)
+#define WEST  (-2)
+#define SOUTH (-1)
+
+#define GREEN_FOOD (8*8 + LED_GREEN)
+#define RED_FOOD (8*8 + LED_RED)
+#define YELLOW_FOOD (8*8 + LED_YELLOW)
+#define SNAKE_BODY (1)
+#define EMPTY (-1)
 
 // Returns true if you can go in the requested direction
-bool check(int8_t next)
+int8_t check(int8_t next)
 {
-  return snake[next] == -1;
+  int8_t value = snake[next];
+  if (value >= 0 && value < 8*8) return SNAKE_BODY;
+  else return value;
 }
 
 void lose()
 {
-  return;
+  for (int i = 0; i < 1000/100; i++) {
+    snake_color = (i % 3) + 1;
+    update_screen();
+    delay(100);
+  }
+  setup();
 }
 
-int8_t next_head(uint8_t direction)
+int8_t next_head(int8_t direction)
 {
   switch (direction) {
   case NORTH: return index(x(head), (8 + y(head) - 1) % 8); break;
@@ -68,30 +90,39 @@ void grow(int8_t next)
 {
   snake[next] = head;
   head = next;
-  Serial.println(head);
 }
 
-// Button handlers
-void move(uint8_t direction)
+void shrink()
 {
-  int8_t next = next_head(direction);
-  if (!check(next)) {
-    lose();
-  } else {
-    grow(next);
-    current_direction = direction;
+  int8_t last = head;
+  for (int8_t i = head; snake[i] != -1; last = i, i = snake[i]);
+  snake[last] = -1;
+}
+
+void move(int8_t next)
+{
+  switch (check(next))
+  {
+  case SNAKE_BODY: lose(); break;
+  case RED_FOOD: game_speed_ms = game_speed_ms * 80 / 100; // fall thru
+  case GREEN_FOOD: grow(next); new_food(next); break;
+  case EMPTY: shrink(); grow(next); break;
+  default: break;
   }
   update_screen();
 }
 
-void turn(uint8_t direction)
+// Button handler
+void turn(int8_t direction)
 {
-  current_direction = direction;
+  if (current_direction + direction != 0)
+    current_direction = direction;
 }
 
 void update_screen()
 {
   matrix.clear();
+  matrix.drawPixel(food.x, food.y, food.color);
   draw_snake();
   matrix.writeDisplay();
 }
@@ -99,16 +130,22 @@ void update_screen()
 void draw_snake()
 {
   for (int i = head; ; i = snake[i]) {
-    Serial.print(x(i));Serial.print(" ");
-    Serial.print(y(i));Serial.print(" ");
-    Serial.print(snake[i]);Serial.println(" ");
-    matrix.drawPixel(x(i), y(i), LED_YELLOW);
+    matrix.drawPixel(x(i), y(i), snake_color);
     if (snake[i] == -1) break;
   }
-  Serial.println(" ");
 }
 
-
+void new_food(int8_t next)
+{
+  int8_t proposal;
+  do {
+    food.x = random(8);
+    food.y = random(8);
+    proposal = index(food.x, food.y);
+  } while (check(proposal) != EMPTY && proposal != next);
+  food.color = random(100) > 10 ? LED_GREEN : LED_RED;
+  snake[proposal] = 8*8 + food.color;
+}
 
 void setup()
 {
@@ -123,20 +160,22 @@ void setup()
   // Screen setup
   matrix.begin(0x70);
   matrix.setBrightness(6);
-
   // My screen is soldered in the "1" direction
   matrix.setRotation(1);
 
-  for (int i = 0; i < 8*8; i++) {
-    snake[i] = -1;
-  }
+  randomSeed(analogRead(A7));
+
+  for (int i = 0; i < 8*8; i++) snake[i] = EMPTY;
+  new_food(head);
+  snake_color = LED_YELLOW;
+  current_direction = random(2) ? SOUTH : EAST;
   update_screen();
 }
 
 void loop()
 {
-  if (millis() % 500 == 0) {
-    move(current_direction);
+  if (millis() % game_speed_ms == 0) {
+    move(next_head(current_direction));
   }
   // Polling loop
   on_button(UB, 25, turn, NORTH);
